@@ -1,5 +1,6 @@
 
-name: Lab 3 - Docker Build and Push
+
+name: Lab 3 - Docker Build Push and Deploy
 
 on:
   push:
@@ -45,4 +46,55 @@ jobs:
         with:
           context: .
           push: true
-          tags: praveenuriviti/flask-cicd-lab:latest
+          build-args: |
+            APP_VERSION=${{ github.sha }}
+          tags: |
+            praveenuriviti/flask-cicd-lab:latest
+            praveenuriviti/flask-cicd-lab:${{ github.sha }}
+
+  deploy:
+    needs: docker
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy Docker container on EC2
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
+          script: |
+            set -e
+
+            echo "Pulling latest Docker image"
+
+            docker pull praveenuriviti/flask-cicd-lab:${{ github.sha }}
+
+            echo "Stopping old container"
+
+            docker stop flask-container || true
+            docker rm flask-container || true
+
+            echo "Starting new container"
+
+            docker run -d \
+              --name flask-container \
+              -p 5001:5000 \
+              --restart unless-stopped \
+              praveenuriviti/flask-cicd-lab:${{ github.sha }}
+
+            echo "Checking application health"
+
+            for i in $(seq 1 10); do
+              if curl --fail http://localhost:5001/health; then
+                echo "Deployment successful"
+                exit 0
+              fi
+              sleep 3
+            done
+
+            echo "Application health check failed"
+            docker logs flask-container
+            exit 1
+
